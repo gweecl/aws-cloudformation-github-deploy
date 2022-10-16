@@ -1,0 +1,103 @@
+name: 'AWS CloudFormation "Deploy CloudFormation Stack" Action for GitHub Actions'
+description: "Deploys a AWS CloudFormation stack"
+branding:
+  icon: "cloud"
+  color: "orange"
+inputs:
+  aws_region:
+    description: AWS credential and region for GitHub Actions.
+    type: string
+    required: true
+  aws_iam_role_arn:
+    description: AWS credential and region for GitHub Actions.
+    type: string
+    required: true
+  execution_role_arn:
+    description: AWS IAM role that AWS CloudFormation assumes when executing the change set.
+    type: string
+    required: true
+  stack_name:
+    description: The name of the CloudFormation stack to be created.
+    type: string
+    required: true
+  bucket_name:
+    description: The S3 bucket name to upload artifacts.
+    type: string
+    required: true
+  template:
+    description: The relative path to the CloudFormation stack template.
+    type: string
+    required: true
+  packaged_template:
+    description: The relative path to the CloudFormation packaged template. Default to root directory.
+    type: string
+    default: "./${{ github.sha }}.packaged.yaml"
+    required: false
+  aws_secret_arn:
+    description: The AWS Secrets Manager ARN that contains parameters for CloudFormation.
+    type: string
+    required: false
+  capabilities:
+    description: A space-delimited list of stack template capabilities to acknowledge. Defaults to 'CAPABILITY_IAM'.
+    type: string
+    default: 'CAPABILITY_IAM'
+    required: false
+  tags:
+    description: The relative path to the JSON file that contains tags for CloudFormation.
+    type: string
+    required: false
+outputs:
+  stack-id:
+    description: "The id of the deployed stack. In addition, any outputs declared in the deployed CloudFormation stack will also be set as outputs for the action, e.g. if the stack has a stack output named 'foo', this action will also have an output named 'foo'."
+    value: ${{ steps.describe-stack.outputs.stack-id }}
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v3
+    - uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-region: ${{ inputs.aws_region }}
+        role-to-assume: ${{ inputs.aws_iam_role_arn }}
+
+    - run: |
+        aws cloudformation package --template-file ${{ inputs.template }} \
+          --s3-bucket ${{ inputs.bucket_name }} \
+          --s3-prefix ${{ inputs.stack_name }} \
+          --output-template-file ${{ inputs.packaged_template }}
+      shell: bash
+
+    - run: |
+        aws s3 cp ${{ inputs.packaged_template }} s3://${{ inputs.bucket_name }}/${{ inputs.stack_name }}/ --no-follow-symlinks
+      shell: bash
+
+    - uses: aws-actions/aws-secretsmanager-get-secrets@v1
+      with:
+        secret-ids: |
+          AWS_CFN_PARAMS, ${{ inputs.aws_secret_arn }}
+
+    - run: |
+        if ! aws cloudformation describe-stacks --stack-name ${{ inputs.stack_name }} ; then
+        
+        aws cloudformation create-stack --stack-name ${{ inputs.stack_name }} \
+          --template-body "$(cat ${{ inputs.packaged_template }})" \
+          --parameter "$(echo $AWS_CFN_PARAMS | jq 'to_entries | map({ "ParameterKey": .key, "ParameterValue": .value })')" \
+          --role-arn ${{ inputs.execution_role_arn }} \
+          --capabilities ${{ inputs.capabilities }} \
+          --tags "$([ -f ${{ inputs.tags }} ] && cat ${{ inputs.tags }} | jq 'to_entries | map({ "Key": .key, "Value": .value })')"
+
+        else
+
+        aws cloudformation update-stack --stack-name ${{ inputs.stack_name }} \
+          --template-body "$(cat ${{ inputs.packaged_template }})" \
+          --parameter "$(echo $AWS_CFN_PARAMS | jq 'to_entries | map({ "ParameterKey": .key, "ParameterValue": .value })')" \
+          --role-arn ${{ inputs.execution_role_arn }} \
+          --capabilities ${{ inputs.capabilities }} \
+          --tags "$([ -f ${{ inputs.tags }} ] && cat ${{ inputs.tags }} | jq 'to_entries | map({ "Key": .key, "Value": .value })')"
+
+        fi
+      shell: bash
+
+    - id: describe-stack
+      run: |
+        echo "::set-output name=stack-id::$(echo aws cloudformation describe-stacks --stack-name ${{ inputs.stack_name }} --query "Stacks[0].StackId")"
+      shell: bash
