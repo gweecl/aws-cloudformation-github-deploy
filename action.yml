@@ -4,14 +4,6 @@ branding:
   icon: "cloud"
   color: "orange"
 inputs:
-  aws_region:
-    description: AWS credential and region for GitHub Actions.
-    type: string
-    required: true
-  aws_iam_role_arn:
-    description: AWS credential and region for GitHub Actions.
-    type: string
-    required: true
   execution_role_arn:
     description: AWS IAM role that AWS CloudFormation assumes when executing the change set.
     type: string
@@ -53,12 +45,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: actions/checkout@v3
-    - uses: aws-actions/configure-aws-credentials@v1
-      with:
-        aws-region: ${{ inputs.aws_region }}
-        role-to-assume: ${{ inputs.aws_iam_role_arn }}
-
     - run: |
         aws cloudformation package --template-file ${{ inputs.template }} \
           --s3-bucket ${{ inputs.bucket_name }} \
